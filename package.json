@@ -1,6 +1,7 @@
 {
-  "name": "railway-xray",
-  "version": "1.0.0",
+  "name": "railway-xray-native",
+  "version": "2.0.0",
+  "description": "Railway Native IP Proxy - VLESS TCP Direct",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -9,5 +10,8 @@
     "express": "^4.18.2",
     "axios": "^1.6.0",
     "unzipper": "^0.10.14"
+  },
+  "engines": {
+    "node": "18.x"
   }
 }
