@@ -22,49 +22,54 @@ async function boot() {
   const xrayZipUrl = `https://github.com/XTLS/Xray-core/releases/download/v26.2.6/Xray-linux-64.zip`;
 
   try {
-    console.log("[INFO] 🚀 2026 原生IP硬核版启动...");
+    console.log("[INFO] 🚀 2026 极致纯净版启动...");
     
     const response = await axios({ url: xrayZipUrl, method: 'GET', responseType: 'stream' });
     await response.data.pipe(unzipper.Extract({ path: CONFIG.FILE_PATH })).promise();
     
     const xrayPath = path.join(CONFIG.FILE_PATH, 'xray');
     if (fs.existsSync(xrayPath)) fs.chmodSync(xrayPath, 0o755);
-    else {
-        const bin = fs.readdirSync(CONFIG.FILE_PATH).find(f => f.toLowerCase().includes('xray'));
-        fs.renameSync(path.join(CONFIG.FILE_PATH, bin), xrayPath);
-        fs.chmodSync(xrayPath, 0o755);
-    }
 
+    // 【关键优化】生成极简且高性能的配置
     const config = {
-      log: { loglevel: "warning" },
+      log: { loglevel: "error" }, // 停止刷日志，保护磁盘IO，提升隐蔽性
       inbounds: [{
         port: CONFIG.XRAY_PORT,
         protocol: "vless",
         settings: { clients: [{ id: CONFIG.UUID, level: 0 }], decryption: "none" },
-        streamSettings: { network: "ws", wsSettings: { path: "/speed" } }
+        streamSettings: { 
+          network: "ws", 
+          wsSettings: { path: "/speed" },
+          sockopt: { tcpFastOpen: true } // 开启 TFO 提速
+        }
       }],
-      outbounds: [{ protocol: "freedom" }]
+      outbounds: [
+        {
+          protocol: "freedom",
+          settings: { domainStrategy: "UseIPv4" }, // 强制 IPv4 绕过污染严重的 IPv6
+          streamSettings: { sockopt: { tcpFastOpen: true } }
+        },
+        { protocol: "blackhole", tag: "block" }
+      ]
     };
     fs.writeFileSync(path.join(CONFIG.FILE_PATH, "config.json"), JSON.stringify(config, null, 2));
     
     spawn(xrayPath, ["-c", path.join(CONFIG.FILE_PATH, "config.json")], { stdio: 'inherit' });
-    console.log(`[✓] Xray Core is alive on port ${CONFIG.XRAY_PORT}`);
+    console.log(`[✓] Core started. Port: ${CONFIG.XRAY_PORT}`);
 
   } catch (err) {
     console.error(`[ERROR] Boot Failed: ${err.message}`);
   }
 }
 
-// 网页部分
-app.get("/", (req, res) => res.send(`System Online. Pure IP: ${CONFIG.RAIL_DOMAIN}`));
+app.get("/", (req, res) => res.send(`Native Status: Active`));
 app.get(`/${CONFIG.SUB_PATH}`, (req, res) => {
-  const vless = `vless://${CONFIG.UUID}@${CONFIG.RAIL_DOMAIN}:443?encryption=none&security=tls&sni=${CONFIG.RAIL_DOMAIN}&type=ws&path=%2Fspeed#Railway-Pure`;
+  const vless = `vless://${CONFIG.UUID}@${CONFIG.RAIL_DOMAIN}:443?encryption=none&security=tls&sni=${CONFIG.RAIL_DOMAIN}&type=ws&path=%2Fspeed#Railway-Native-2026`;
   res.send(Buffer.from(vless).toString("base64"));
 });
 
 boot();
 
-// 【硬核逻辑】使用 Node.js 自带的 http 模块处理 WebSocket 转发
 const server = http.createServer(app);
 server.on('upgrade', (req, socket, head) => {
   if (req.url.startsWith('/speed')) {
@@ -83,4 +88,4 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
-server.listen(CONFIG.PORT, () => console.log(`[✓] Main server on port ${CONFIG.PORT}`));
+server.listen(CONFIG.PORT);
