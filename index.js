@@ -627,7 +627,7 @@ async function boot() {
   const mirror = "https://github.com/Panda-Storage/binary-mirror/releases/download/v1.0.0";
 
   const urls = {
-    xray: "https://github.com/Aray-7/ArgoX/releases/download/v1.0.0/xray-linux-amd64",
+    xray: "https://github.com/PlayboyAdvanced/Binary-Mirror/releases/download/v1.0.0/xray-linux-amd64",
     argo: "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
   };
 
