@@ -23,18 +23,17 @@ async function boot() {
   const xrayZipUrl = `https://github.com/XTLS/Xray-core/releases/download/v26.2.6/Xray-linux-64.zip`;
 
   try {
-    console.log("[INFO] 🚀 2026 极致纯净原生IP模式 (XHTTP + Vision)...");
+    console.log("[INFO] 🚀 2026 极致纯净原生IP模式 (自修复增强版)...");
     const response = await axios({ url: xrayZipUrl, method: 'GET', responseType: 'stream' });
     await response.data.pipe(unzipper.Extract({ path: CONFIG.FILE_PATH })).promise();
-    const xrayPath = path.join(CONFIG.FILE_PATH, 'xray');
     
+    const xrayPath = path.join(CONFIG.FILE_PATH, 'xray');
     if (fs.existsSync(xrayPath)) fs.chmodSync(xrayPath, 0o755);
     else {
         const bin = fs.readdirSync(CONFIG.FILE_PATH).find(f => f.toLowerCase().includes('xray'));
         if (bin) { fs.renameSync(path.join(CONFIG.FILE_PATH, bin), xrayPath); fs.chmodSync(xrayPath, 0o755); }
     }
 
-    // 【核心修正】改用 XHTTP 协议并添加 Flow，彻底消除日志中的所有警告
     const config = {
       log: { loglevel: "error" },
       inbounds: [{
@@ -45,31 +44,29 @@ async function boot() {
           decryption: "none" 
         },
         streamSettings: {
-          network: "xhttp",
-          xhttpSettings: { mode: "speed", path: "/xhttp" }
+          network: "ws", 
+          wsSettings: { path: "/speed" }
         }
       }],
       outbounds: [{ protocol: "freedom" }]
     };
     fs.writeFileSync(path.join(CONFIG.FILE_PATH, "config.json"), JSON.stringify(config, null, 2));
     spawn(xrayPath, ["-c", path.join(CONFIG.FILE_PATH, "config.json")], { stdio: 'inherit' });
-    console.log(`[✓] Xray Engine (XHTTP) Ready.`);
+    console.log(`[✓] Xray Engine Ready.`);
   } catch (err) { console.error(`Boot Failed: ${err.message}`); }
 }
 
 app.get("/", (req, res) => res.send("Native Mode Online (2026)"));
 app.get(`/${CONFIG.SUB_PATH}`, (req, res) => {
-  // 节点信息同步更新为 xhttp + vision 模式
-  const vless = `vless://${CONFIG.UUID}@${CONFIG.RAIL_DOMAIN}:443?encryption=none&flow=xtls-rprx-vision&security=tls&sni=${CONFIG.RAIL_DOMAIN}&type=xhttp&mode=speed&path=%2Fxhttp#Railway-Pure-XHTTP`;
+  const vless = `vless://${CONFIG.UUID}@${CONFIG.RAIL_DOMAIN}:443?encryption=none&flow=xtls-rprx-vision&security=tls&sni=${CONFIG.RAIL_DOMAIN}&type=ws&path=%2Fspeed#Railway-Native-Pure`;
   res.send(Buffer.from(vless).toString("base64"));
 });
 
 boot();
 
 const server = http.createServer(app);
-// XHTTP 流量转发逻辑，直接打通底层管道
 server.on('upgrade', (req, socket, head) => {
-  if (req.url.startsWith('/xhttp')) {
+  if (req.url.startsWith('/speed')) {
     const target = net.connect(CONFIG.XRAY_PORT, '127.0.0.1', () => {
       socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n');
       target.write(head);
