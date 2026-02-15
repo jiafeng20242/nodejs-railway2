@@ -1,16 +1,15 @@
 {
-  "name": "railway-xray",
+  "name": "railway-proxy",
   "version": "1.0.0",
-  "description": "Node.js Service",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "axios": "^1.6.0"
+    "http-proxy": "^1.18.1"
   },
   "engines": {
-    "node": "18.x"
+    "node": ">=16"
   }
 }
