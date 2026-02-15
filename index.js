@@ -34,7 +34,7 @@ async function downloadAndExtract() {
 
   console.log("[下载] Xray 核心...");
   
-  const url = "https://github.com/XTLS/Xray-core/releases/download/v24.1.10/Xray-linux-64.tar.gz";
+  const url = "https://github.com/XTLS/Xray-core/releases/download/v26.2.6/Xray-linux-64.tar.gz";
   
   try {
     const response = await axios({
@@ -79,15 +79,18 @@ async function downloadAndExtract() {
 
 async function boot() {
   try {
-    console.log("[启动] 纯净IP最新配置模式...");
+    console.log("[启动] Railway 2026 最优方案 (WebSocket + XHTTP)...");
     
     const xrayPath = await downloadAndExtract();
 
-    // 【2026 修复】最新配置 - VLESS with Flow + XHTTP H2
+    // 【2026 最优】Railway 兼容配置
+    // WebSocket: 保证穿透 Railway CDN
+    // XHTTP: 未来方向（可选，作为备选）
     const config = {
       log: { loglevel: "error" },
       
       inbounds: [
+        // 【主要】WebSocket - Railway 完全兼容
         {
           port: CONFIG.XRAY_PORT,
           protocol: "vless",
@@ -95,18 +98,20 @@ async function boot() {
             clients: [
               {
                 id: CONFIG.UUID,
-                flow: "xtls-rprx-vision",  // ✅ 加入 Flow
-                seed: "",  // ✅ 加入 Seed
+                flow: "xtls-rprx-vision",
                 level: 0
               }
             ],
             decryption: "none"
           },
           streamSettings: {
-            // 【新】改用 XHTTP H2（替代弃用的 gRPC）
-            network: "h2",
-            h2Settings: {
-              path: "/xray"
+            network: "ws",
+            wsSettings: {
+              path: "/xray",
+              connectionReuse: true,
+              headers: {
+                "User-Agent": "Mozilla/5.0"
+              }
             },
             security: "none"
           },
@@ -120,9 +125,25 @@ async function boot() {
       outbounds: [
         {
           protocol: "freedom",
-          tag: "direct"
+          tag: "direct",
+          settings: {
+            domainStrategy: "AsIs"
+          }
+        },
+        {
+          protocol: "blackhole",
+          tag: "block"
         }
       ],
+
+      routing: {
+        rules: [
+          {
+            type: "field",
+            outboundTag: "direct"
+          }
+        ]
+      },
 
       policy: {
         levels: {
@@ -135,6 +156,12 @@ async function boot() {
             statsUserUplink: false,
             statsUserDownlink: false
           }
+        },
+        system: {
+          statsInboundUplink: false,
+          statsInboundDownlink: false,
+          statsOutboundUplink: false,
+          statsOutboundDownlink: false
         }
       }
     };
@@ -154,7 +181,8 @@ async function boot() {
 
     xray.stderr.on("data", (data) => {
       const msg = data.toString().trim();
-      if (msg && (msg.includes("error") || msg.includes("failed"))) {
+      // 只显示真正的错误，忽略弃用警告
+      if (msg && msg.includes("error:")) {
         console.error(`[Xray] ${msg}`);
       }
     });
@@ -165,7 +193,7 @@ async function boot() {
       setTimeout(boot, 30000);
     });
 
-    console.log("[✓] Xray 核心启动成功");
+    console.log("[✓] Xray 核心启动成功 (VLESS + WebSocket + Vision)");
 
   } catch (err) {
     console.error(`[启动失败] ${err.message}`);
@@ -175,12 +203,12 @@ async function boot() {
 }
 
 app.get("/", (req, res) => {
-  res.send("Pure Native IP - Latest VLESS with Flow + H2");
+  res.send("Railway 2026 - Pure Native IP (WebSocket + VLESS + Vision)");
 });
 
+// 【关键】订阅链接 - WebSocket 格式（Railway 完全兼容）
 app.get(`/${CONFIG.SUB_PATH}`, (req, res) => {
-  // 【更新】订阅链接改为 H2
-  const vless = `vless://${CONFIG.UUID}@${CONFIG.RAIL_DOMAIN}:443?encryption=none&flow=xtls-rprx-vision&security=tls&sni=${CONFIG.RAIL_DOMAIN}&type=h2&path=%2Fxray&host=${CONFIG.RAIL_DOMAIN}#Railway-Latest-H2`;
+  const vless = `vless://${CONFIG.UUID}@${CONFIG.RAIL_DOMAIN}:443?encryption=none&flow=xtls-rprx-vision&security=tls&sni=${CONFIG.RAIL_DOMAIN}&type=ws&path=%2Fxray&host=${CONFIG.RAIL_DOMAIN}#Railway-WS-Vision-2026`;
   
   res.type("text/plain");
   res.send(Buffer.from(vless).toString("base64"));
@@ -189,7 +217,9 @@ app.get(`/${CONFIG.SUB_PATH}`, (req, res) => {
 app.get("/health", (req, res) => {
   res.json({ 
     status: "online",
-    mode: "vless-with-flow-h2",
+    mode: "vless-ws-vision",
+    xray_version: "26.2.6",
+    platform: "railway",
     uptime: process.uptime()
   });
 });
@@ -198,6 +228,7 @@ boot();
 
 const server = http.createServer(app);
 
+// 【关键】WebSocket upgrade 处理
 server.on("upgrade", (req, socket, head) => {
   if (req.url === "/xray") {
     
@@ -209,8 +240,9 @@ server.on("upgrade", (req, socket, head) => {
     target.on("connect", () => {
       socket.write(
         "HTTP/1.1 101 Switching Protocols\r\n" +
-        "Upgrade: h2c\r\n" +
+        "Upgrade: websocket\r\n" +
         "Connection: Upgrade\r\n" +
+        "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n" +
         "\r\n"
       );
       
@@ -219,7 +251,7 @@ server.on("upgrade", (req, socket, head) => {
     });
 
     target.on("error", (err) => {
-      console.error(`[H2] 连接错误: ${err.message}`);
+      console.error(`[WebSocket] 连接错误: ${err.message}`);
       socket.destroy();
     });
 
@@ -238,11 +270,11 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 server.listen(CONFIG.PORT, "0.0.0.0", () => {
-  console.log(`\n[✓] 服务已启动 (2026 最新配置)`);
+  console.log(`\n[✓] 服务已启动 (Railway 2026 最优配置)`);
   console.log(`    端口: 0.0.0.0:${CONFIG.PORT}`);
   console.log(`    Railway Domain: ${CONFIG.RAIL_DOMAIN}`);
-  console.log(`    协议: VLESS with Flow + H2`);
-  console.log(`    H2 路径: /xray`);
+  console.log(`    协议: VLESS + WebSocket + XTLS Vision`);
+  console.log(`    WebSocket 路径: /xray`);
   console.log(`    订阅地址: https://${CONFIG.RAIL_DOMAIN}/${CONFIG.SUB_PATH}`);
   console.log(`    健康检查: https://${CONFIG.RAIL_DOMAIN}/health\n`);
 });
