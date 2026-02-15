@@ -22,7 +22,7 @@ if (!fs.existsSync(CONFIG.FILE_PATH)) fs.mkdirSync(CONFIG.FILE_PATH, { recursive
 async function boot() {
   const xrayZipUrl = `https://github.com/XTLS/Xray-core/releases/download/v26.2.6/Xray-linux-64.zip`;
   try {
-    console.log("[INFO] 🚀 2026 XHTTP 极致纯净原生IP模式启动...");
+    console.log("[INFO] 🚀 2026 XHTTP 终极审定版启动...");
     const response = await axios({ url: xrayZipUrl, method: 'GET', responseType: 'stream' });
     await response.data.pipe(unzipper.Extract({ path: CONFIG.FILE_PATH })).promise();
     const xrayPath = path.join(CONFIG.FILE_PATH, 'xray');
@@ -32,7 +32,6 @@ async function boot() {
         if (bin) { fs.renameSync(path.join(CONFIG.FILE_PATH, bin), xrayPath); fs.chmodSync(xrayPath, 0o755); }
     }
 
-    // 【审定配置】Xray v26 强制标准：XHTTP + Vision 流控
     const config = {
       log: { loglevel: "error" },
       inbounds: [{
@@ -51,14 +50,13 @@ async function boot() {
     };
     fs.writeFileSync(path.join(CONFIG.FILE_PATH, "config.json"), JSON.stringify(config, null, 2));
     spawn(xrayPath, ["-c", path.join(CONFIG.FILE_PATH, "config.json")], { stdio: 'inherit' });
-    console.log(`[✓] Xray Engine (XHTTP-Vision) Active.`);
+    console.log(`[✓] Xray Engine (XHTTP) Active.`);
   } catch (err) { console.error(`Boot Failed: ${err.message}`); }
 }
 
-app.get("/", (req, res) => res.send("Native Mode Online (2026-XHTTP)"));
+app.get("/", (req, res) => res.send("Native Pure IP - Verified"));
 app.get(`/${CONFIG.SUB_PATH}`, (req, res) => {
-  // 订阅链接：2026 标准 XHTTP 格式
-  const vless = `vless://${CONFIG.UUID}@${CONFIG.RAIL_DOMAIN}:443?encryption=none&flow=xtls-rprx-vision&security=tls&sni=${CONFIG.RAIL_DOMAIN}&type=xhttp&mode=speed&path=%2Fspeed#Railway-Native-XHTTP`;
+  const vless = `vless://${CONFIG.UUID}@${CONFIG.RAIL_DOMAIN}:443?encryption=none&flow=xtls-rprx-vision&security=tls&sni=${CONFIG.RAIL_DOMAIN}&type=xhttp&mode=speed&path=%2Fspeed#Railway-Native-Verified`;
   res.send(Buffer.from(vless).toString("base64"));
 });
 
@@ -66,7 +64,8 @@ boot();
 
 const server = http.createServer(app);
 
-// 【审定转发逻辑】XHTTP 流量直接通过底层 TCP 隧道转发，不走 WebSocket Upgrade
+// 【审定：核心转发逻辑】
+// 使用 connect 处理隧道流量，不再强求 WebSocket 升级，这才是 XHTTP 秒连的关键
 server.on('connect', (req, socket, head) => {
     const target = net.connect(CONFIG.XRAY_PORT, '127.0.0.1', () => {
         socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
@@ -76,7 +75,7 @@ server.on('connect', (req, socket, head) => {
     target.on('error', () => socket.end());
 });
 
-// 兼容旧版及 H2 握手
+// 备用兼容
 server.on('upgrade', (req, socket, head) => {
     if (req.url.startsWith('/speed')) {
         const target = net.connect(CONFIG.XRAY_PORT, '127.0.0.1', () => {
