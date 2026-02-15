@@ -79,20 +79,18 @@ async function downloadAndExtract() {
 
 async function boot() {
   try {
-    console.log("[启动] Railway 2026 最优方案 (WebSocket + XHTTP)...");
+    console.log("[启动] Railway 修正版 (同端口 WebSocket)...");
     
     const xrayPath = await downloadAndExtract();
 
-    // 【2026 最优】Railway 兼容配置
-    // WebSocket: 保证穿透 Railway CDN
-    // XHTTP: 未来方向（可选，作为备选）
+    // 【修正】Xray 监听同一端口的不同路径
     const config = {
       log: { loglevel: "error" },
       
       inbounds: [
-        // 【主要】WebSocket - Railway 完全兼容
         {
           port: CONFIG.XRAY_PORT,
+          listen: "127.0.0.1",  // 只监听 localhost
           protocol: "vless",
           settings: {
             clients: [
@@ -181,7 +179,6 @@ async function boot() {
 
     xray.stderr.on("data", (data) => {
       const msg = data.toString().trim();
-      // 只显示真正的错误，忽略弃用警告
       if (msg && msg.includes("error:")) {
         console.error(`[Xray] ${msg}`);
       }
@@ -193,7 +190,7 @@ async function boot() {
       setTimeout(boot, 30000);
     });
 
-    console.log("[✓] Xray 核心启动成功 (VLESS + WebSocket + Vision)");
+    console.log("[✓] Xray 核心启动成功");
 
   } catch (err) {
     console.error(`[启动失败] ${err.message}`);
@@ -202,13 +199,15 @@ async function boot() {
   }
 }
 
+// ===== Express 路由 =====
+
 app.get("/", (req, res) => {
-  res.send("Railway 2026 - Pure Native IP (WebSocket + VLESS + Vision)");
+  res.send("Railway WebSocket Proxy - Ready");
 });
 
-// 【关键】订阅链接 - WebSocket 格式（Railway 完全兼容）
 app.get(`/${CONFIG.SUB_PATH}`, (req, res) => {
-  const vless = `vless://${CONFIG.UUID}@${CONFIG.RAIL_DOMAIN}:443?encryption=none&flow=xtls-rprx-vision&security=tls&sni=${CONFIG.RAIL_DOMAIN}&type=ws&path=%2Fxray&host=${CONFIG.RAIL_DOMAIN}#Railway-WS-Vision-2026`;
+  // 【关键】订阅链接指向 Railway Domain + /xray 路径
+  const vless = `vless://${CONFIG.UUID}@${CONFIG.RAIL_DOMAIN}:443?encryption=none&flow=xtls-rprx-vision&security=tls&sni=${CONFIG.RAIL_DOMAIN}&type=ws&path=%2Fxray&host=${CONFIG.RAIL_DOMAIN}#Railway-WS-Fixed`;
   
   res.type("text/plain");
   res.send(Buffer.from(vless).toString("base64"));
@@ -217,27 +216,33 @@ app.get(`/${CONFIG.SUB_PATH}`, (req, res) => {
 app.get("/health", (req, res) => {
   res.json({ 
     status: "online",
-    mode: "vless-ws-vision",
-    xray_version: "26.2.6",
-    platform: "railway",
+    mode: "websocket",
     uptime: process.uptime()
   });
 });
 
 boot();
 
+// 【修正】创建单一 HTTP 服务器处理所有流量
 const server = http.createServer(app);
 
-// 【关键】WebSocket upgrade 处理
+// 【关键修正】upgrade 事件处理 - 在同一端口上
 server.on("upgrade", (req, socket, head) => {
-  if (req.url === "/xray") {
+  // 只有 /xray 路径的 WebSocket upgrade 请求
+  if (req.url === "/xray" && req.headers.upgrade?.toLowerCase() === "websocket") {
     
+    console.log("[WebSocket] 新连接来自", req.socket.remoteAddress);
+    
+    // 转发到本地 Xray 实例
     const target = net.createConnection({
       port: CONFIG.XRAY_PORT,
       host: "127.0.0.1"
     });
 
     target.on("connect", () => {
+      console.log("[WebSocket] 已连接到 Xray");
+      
+      // 发送 WebSocket upgrade 响应
       socket.write(
         "HTTP/1.1 101 Switching Protocols\r\n" +
         "Upgrade: websocket\r\n" +
@@ -246,39 +251,49 @@ server.on("upgrade", (req, socket, head) => {
         "\r\n"
       );
       
+      // 双向管道转发
       socket.pipe(target);
       target.pipe(socket);
     });
 
     target.on("error", (err) => {
-      console.error(`[WebSocket] 连接错误: ${err.message}`);
+      console.error(`[WebSocket] Xray 连接错误: ${err.message}`);
       socket.destroy();
     });
 
     socket.on("error", (err) => {
-      console.error(`[Socket] 错误: ${err.message}`);
+      console.error(`[WebSocket] Socket 错误: ${err.message}`);
       target.destroy();
     });
 
+    socket.on("close", () => {
+      console.log("[WebSocket] 连接已关闭");
+      target.destroy();
+    });
+
+    // 转发初始数据
     if (head && head.length > 0) {
       target.write(head);
     }
 
   } else {
+    // 其他升级请求直接拒绝
     socket.end();
   }
 });
 
+// 【关键】监听单一端口 - 这是 Railway 要求的
 server.listen(CONFIG.PORT, "0.0.0.0", () => {
-  console.log(`\n[✓] 服务已启动 (Railway 2026 最优配置)`);
-  console.log(`    端口: 0.0.0.0:${CONFIG.PORT}`);
+  console.log(`\n[✓] Railway WebSocket 服务已启动`);
+  console.log(`    HTTP 端口: 0.0.0.0:${CONFIG.PORT}`);
+  console.log(`    Xray 本地: 127.0.0.1:${CONFIG.XRAY_PORT}`);
   console.log(`    Railway Domain: ${CONFIG.RAIL_DOMAIN}`);
-  console.log(`    协议: VLESS + WebSocket + XTLS Vision`);
   console.log(`    WebSocket 路径: /xray`);
   console.log(`    订阅地址: https://${CONFIG.RAIL_DOMAIN}/${CONFIG.SUB_PATH}`);
   console.log(`    健康检查: https://${CONFIG.RAIL_DOMAIN}/health\n`);
 });
 
+// 优雅关闭
 process.on("SIGTERM", () => {
   console.log("[关闭] 收到 SIGTERM 信号");
   server.close();
