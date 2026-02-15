@@ -5,30 +5,26 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 const unzipper = require("unzipper");
+const httpProxy = require("http-proxy"); // 利用你装好的这个零件
 
 const CONFIG = {
   UUID: process.env.UUID || "9afd1229-b893-40c1-84dd-51e7ce204913",
   PORT: parseInt(process.env.PORT) || 8080,
-  // 关键：这里直接读取 Railway 自动分配的域名
-  RAIL_DOMAIN: process.env.RAILWAY_STATIC_URL || "nodejs-railway-production-a3e6.up.railway.app",
+  XRAY_PORT: 3000, // 让 Xray 躲在 3000 端口，不跟网页抢 8080
+  RAIL_DOMAIN: process.env.RAILWAY_STATIC_URL || "nodejs-railway-production-ad5e.up.railway.app",
   SUB_PATH: (process.env.SUB_PATH || "sub").replace(/^\/+/, ""),
   FILE_PATH: "./bin_core",
 };
 
-const logger = {
-  info: (msg) => console.log(`\x1b[36m[INFO]\x1b[0m ${msg}`),
-  error: (msg) => console.error(`\x1b[31m[ERROR]\x1b[0m ${msg}`),
-  success: (msg) => console.log(`\x1b[32m[✓]\x1b[0m ${msg}`),
-};
+const proxy = httpProxy.createProxyServer({ ws: true });
 
 if (!fs.existsSync(CONFIG.FILE_PATH)) fs.mkdirSync(CONFIG.FILE_PATH, { recursive: true });
 
 async function boot() {
-  // 只下载 Xray，不再使用 Cloudflared
   const xrayZipUrl = `https://github.com/XTLS/Xray-core/releases/download/v26.2.6/Xray-linux-64.zip`;
 
   try {
-    logger.info("🚀 启动原生 IP 纯净模式 (无CF转接)...");
+    console.log("🚀 启动原生 IP 模式 (端口复用版)...");
     
     // 下载 Xray
     const response = await axios({ url: xrayZipUrl, method: 'GET', responseType: 'stream' });
@@ -42,45 +38,49 @@ async function boot() {
         fs.chmodSync(xrayPath, 0o755);
     }
 
-    // 生成直接映射端口的配置
-    generateDirectConfig();
+    // 生成配置：让 Xray 听 3000 端口
+    const config = {
+      log: { loglevel: "warning" },
+      inbounds: [{
+        port: CONFIG.XRAY_PORT,
+        protocol: "vless",
+        settings: { clients: [{ id: CONFIG.UUID, level: 0 }], decryption: "none" },
+        streamSettings: { network: "ws", wsSettings: { path: "/speed" } }
+      }],
+      outbounds: [{ protocol: "freedom" }]
+    };
+    fs.writeFileSync(path.join(CONFIG.FILE_PATH, "config.json"), JSON.stringify(config, null, 2));
     
-    logger.info("Launching Xray Core...");
+    // 启动 Xray
     spawn(xrayPath, ["-c", path.join(CONFIG.FILE_PATH, "config.json")], { stdio: 'inherit' });
+    console.log(`[✓] Xray Core started on internal port ${CONFIG.XRAY_PORT}`);
 
   } catch (err) {
-    logger.error(`Boot Failed: ${err.message}`);
-    process.exit(1);
+    console.error(`Boot Failed: ${err.message}`);
   }
 }
 
-function generateDirectConfig() {
-  const config = {
-    log: { loglevel: "warning" },
-    inbounds: [{
-      port: CONFIG.PORT, // 直接监听 Railway 分配的外部端口
-      protocol: "vless",
-      settings: { clients: [{ id: CONFIG.UUID, level: 0 }], decryption: "none" },
-      streamSettings: {
-        network: "ws", // 只有 WS 模式才能通过 Railway 的反代
-        wsSettings: { path: "/speed" }
-      }
-    }],
-    outbounds: [{ protocol: "freedom" }]
-  };
-  fs.writeFileSync(path.join(CONFIG.FILE_PATH, "config.json"), JSON.stringify(config, null, 2));
-}
+// --- 核心技巧：端口复用 ---
+// 当流量访问 /speed 时，转交给 Xray；访问其他时，显示网页
+app.all("/speed*", (req, res) => {
+  proxy.web(req, res, { target: `http://127.0.0.1:${CONFIG.XRAY_PORT}` });
+});
 
-// 首页显示
-app.get("/", (req, res) => res.send(`System Running on Native IP: ${CONFIG.RAIL_DOMAIN}`));
+// 首页
+app.get("/", (req, res) => res.send(`Native IP Active: ${CONFIG.RAIL_DOMAIN}`));
 
-// 订阅内容
+// 订阅
 app.get(`/${CONFIG.SUB_PATH}`, (req, res) => {
-  const domain = CONFIG.RAIL_DOMAIN;
-  // 注意：这是直连 Railway 的节点，不经过 Cloudflare
-  const vless = `vless://${CONFIG.UUID}@${domain}:443?encryption=none&security=tls&sni=${domain}&type=ws&path=%2Fspeed#Railway-Native-IP`;
+  const vless = `vless://${CONFIG.UUID}@${CONFIG.RAIL_DOMAIN}:443?encryption=none&security=tls&sni=${CONFIG.RAIL_DOMAIN}&type=ws&path=%2Fspeed#Railway-Native`;
   res.send(Buffer.from(vless).toString("base64"));
 });
 
 boot();
-app.listen(CONFIG.PORT);
+
+// 处理 WebSocket 升级请求 (这是连上的关键)
+const server = app.listen(CONFIG.PORT, "0.0.0.0");
+server.on('upgrade', (req, socket, head) => {
+  if (req.url.startsWith('/speed')) {
+    proxy.ws(req, socket, head, { target: `http://127.0.0.1:${CONFIG.XRAY_PORT}` });
+  }
+});
