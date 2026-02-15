@@ -109,87 +109,101 @@ function getArch() {
   return mapping[arch] || "amd64";
 }
 
-// 增强的下载器 (支持重试、超时、进度)
-async function downloadFile(url, filename, maxRetries = 3) {
+// 获取系统类型
+function getOS() {
+  const platform = os.platform();
+  const mapping = {
+    linux: "linux",
+    darwin: "darwin",
+    win32: "windows",
+  };
+  return mapping[platform] || "linux";
+}
+
+// 增强的下载器 (支持重试、超时、进度、多镜像源)
+async function downloadFileWithFallback(urls, filename, maxRetries = 3) {
   const filePath = path.join(CONFIG.FILE_PATH, filename);
   let lastError;
 
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      logger.info(
-        `Downloading ${filename} (attempt ${attempt}/${maxRetries})...`
-      );
-
-      const response = await axios({
-        method: "get",
-        url: url,
-        responseType: "stream",
-        timeout: 30000,
-        maxRedirects: 5,
-      });
-
-      const totalLength = parseInt(
-        response.headers["content-length"],
-        10
-      );
-      let downloadedLength = 0;
-
-      return new Promise((resolve, reject) => {
-        const writer = fs.createWriteStream(filePath);
-
-        response.data.on("data", (chunk) => {
-          downloadedLength += chunk.length;
-          const percent = (
-            ((downloadedLength / totalLength) * 100) ||
-            0
-          ).toFixed(1);
-          logger.debug(`${filename}: ${percent}%`);
-        });
-
-        response.data.pipe(writer);
-
-        writer.on("finish", () => {
-          try {
-            writer.close();
-            fs.chmodSync(filePath, 0o755);
-            logger.success(`${filename} ready.`);
-            resolve(filePath);
-          } catch (err) {
-            reject(err);
-          }
-        });
-
-        writer.on("error", (err) => {
-          fs.unlink(filePath, () => {});
-          reject(err);
-        });
-
-        response.data.on("error", (err) => {
-          writer.destroy();
-          fs.unlink(filePath, () => {});
-          reject(err);
-        });
-      });
-    } catch (error) {
-      lastError = error;
-      logger.warn(`Download attempt ${attempt} failed: ${error.message}`);
-
-      if (fs.existsSync(filePath)) {
-        try {
-          fs.unlinkSync(filePath);
-        } catch (e) {}
-      }
-
-      if (attempt < maxRetries) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, 2000 * attempt)
+  // 遍历所有镜像源
+  for (const url of urls) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        logger.info(
+          `Downloading ${filename} from ${url} (attempt ${attempt}/${maxRetries})...`
         );
+
+        const response = await axios({
+          method: "get",
+          url: url,
+          responseType: "stream",
+          timeout: 30000,
+          maxRedirects: 5,
+        });
+
+        const totalLength = parseInt(
+          response.headers["content-length"],
+          10
+        );
+        let downloadedLength = 0;
+
+        return new Promise((resolve, reject) => {
+          const writer = fs.createWriteStream(filePath);
+
+          response.data.on("data", (chunk) => {
+            downloadedLength += chunk.length;
+            const percent = (
+              ((downloadedLength / totalLength) * 100) ||
+              0
+            ).toFixed(1);
+            logger.debug(`${filename}: ${percent}%`);
+          });
+
+          response.data.pipe(writer);
+
+          writer.on("finish", () => {
+            try {
+              writer.close();
+              fs.chmodSync(filePath, 0o755);
+              logger.success(`${filename} ready.`);
+              resolve(filePath);
+            } catch (err) {
+              reject(err);
+            }
+          });
+
+          writer.on("error", (err) => {
+            fs.unlink(filePath, () => {});
+            reject(err);
+          });
+
+          response.data.on("error", (err) => {
+            writer.destroy();
+            fs.unlink(filePath, () => {});
+            reject(err);
+          });
+        });
+      } catch (error) {
+        lastError = error;
+        logger.warn(`Download attempt ${attempt} failed: ${error.message}`);
+
+        if (fs.existsSync(filePath)) {
+          try {
+            fs.unlinkSync(filePath);
+          } catch (e) {}
+        }
+
+        if (attempt < maxRetries) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, 2000 * attempt)
+          );
+        }
       }
     }
   }
 
   throw new Error(
-    `Failed to download ${filename} after ${maxRetries} attempts: ${lastError.message}`
+    `Failed to download ${filename} after all attempts: ${lastError.message}`
   );
 }
 
@@ -622,24 +636,37 @@ function generateLinks(domain) {
 
 async function boot() {
   const arch = getArch();
-  logger.info(`System architecture: ${arch}`);
+  const osType = getOS();
+  logger.info(`System architecture: ${arch}, OS: ${osType}`);
 
-  const mirror = "https://github.com/Panda-Storage/binary-mirror/releases/download/v1.0.0";
+  // 修复：使用多个可靠的 Xray 镜像源，且根据架构动态生成链接
+  const xrayFilename = `xray-${osType}-${arch}`;
+  const xrayUrls = [
+    // 主镜像源
+    `https://github.com/XTLS/Xray-core/releases/latest/download/${xrayFilename}`,
+    // 备用镜像源1
+    `https://cdn.jsdelivr.net/gh/XTLS/Xray-core@main/releases/latest/download/${xrayFilename}`,
+    // 备用镜像源2
+    `https://raw.githubusercontent.com/XTLS/Xray-core/main/releases/latest/download/${xrayFilename}`,
+  ];
 
   const urls = {
-    xray: "https://github.com/PlayboyAdvanced/Binary-Mirror/releases/download/v1.0.0/xray-linux-amd64",
-    argo: "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
+    xray: xrayUrls,
+    argo: [
+      "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
+      "https://cdn.jsdelivr.net/gh/cloudflare/cloudflared@latest/releases/latest/download/cloudflared-linux-amd64"
+    ],
   };
 
   try {
     // 生成配置
     generateXrayConfig();
 
-    // 并发下载
+    // 并发下载（使用多镜像源下载函数）
     logger.info("Downloading core binaries...");
     const [xrayPath, argoPath] = await Promise.all([
-      downloadFile(urls.xray, "xray"),
-      downloadFile(urls.argo, "cloudflared"),
+      downloadFileWithFallback(urls.xray, "xray"),
+      downloadFileWithFallback(urls.argo, "cloudflared"),
     ]);
 
     logger.success("All binaries downloaded.");
